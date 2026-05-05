@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const aiRoutes = require('./routes/ai');
 const emailRoutes = require('./routes/emails');
+const authRoutes = require('./routes/auth');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -13,6 +14,7 @@ app.use(express.json());
 // Routes
 app.use('/api/ai', aiRoutes);
 app.use('/api/emails', emailRoutes);
+app.use('/api/auth', authRoutes);
 
 // Health check
 app.get('/', (req, res) => {
