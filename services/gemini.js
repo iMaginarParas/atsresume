@@ -34,16 +34,24 @@ async function generateStructuredContent(prompt, systemPrompt = "", schemaDescri
       Do not include any markdown formatting like \`\`\`json or extra text.
     `;
     
-    const result = await model.generateContent(fullPrompt);
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }]
+    });
+
     const response = await result.response;
     const text = response.text().trim();
     
-    // Clean potential markdown formatting
-    const jsonStr = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    // Improved JSON extraction
+    let jsonStr = text;
+    if (text.includes("```")) {
+      jsonStr = text.split("```")[1].replace(/^json/, "").trim();
+    }
+    
     return JSON.parse(jsonStr);
   } catch (error) {
-    console.error("Gemini generateStructuredContent error:", error);
-    throw error;
+    console.error("Gemini generateStructuredContent error detail:", error);
+    // Return a structured error so the frontend knows what happened
+    throw new Error(`AI_STRUCTURED_ERROR: ${error.message}`);
   }
 }
 
