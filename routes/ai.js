@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateRequest } = require('../middleware/auth');
 const { generateStructuredContent, streamContent } = require('../services/gemini');
+const { supabase: supabaseAdmin } = require('../services/supabase');
 
 /**
  * Interview Prep Logic
@@ -102,6 +103,99 @@ router.post('/parse-resume', authenticateRequest, async (req, res) => {
   } catch (error) {
     console.error('Parse resume route error:', error);
     res.status(500).json({ error: 'AI processing failed' });
+  }
+});
+
+/**
+ * AI Apply Logic (Search + Score + Queue)
+ */
+router.post('/ai-apply', authenticateRequest, async (req, res) => {
+  const { resume_id, resume_data, resume_title, location, job_type, min_score = 60, max_applications = 20 } = req.body;
+  const user = req.user;
+
+  try {
+    const JSEARCH_API_KEY = process.env.RAPIDAPI_KEY;
+    if (!JSEARCH_API_KEY) return res.status(503).json({ error: 'Search service unavailable' });
+
+    // 1. Create campaign record
+    const { data: campaign, error: campErr } = await supabaseAdmin
+      .from('ai_apply_campaigns')
+      .insert({
+        user_id: user.id,
+        resume_id,
+        status: 'running',
+        location: location || null,
+        job_type: job_type || null,
+        min_score,
+        max_applications,
+        started_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (campErr) throw campErr;
+
+    // 2. Search Jobs (Simplified for now, calling JSearch)
+    const searchQuery = resume_title || 'software engineer';
+    const searchRes = await fetch(`https://jsearch.p.rapidapi.com/search?query=${encodeURIComponent(searchQuery)}&location=${encodeURIComponent(location || '')}`, {
+      headers: {
+        'x-rapidapi-host': 'jsearch.p.rapidapi.com',
+        'x-rapidapi-key': JSEARCH_API_KEY
+      }
+    });
+    const searchData = await searchRes.json();
+    const jobs = (searchData.data || []).slice(0, 10); // Batch of 10
+
+    if (jobs.length === 0) {
+      await supabaseAdmin.from('ai_apply_campaigns').update({ status: 'completed', jobs_searched: 0 }).eq('id', campaign.id);
+      return res.json({ queued: 0, total_found: 0 });
+    }
+
+    // 3. AI Scoring (Using Gemini)
+    const prompt = `Score these ${jobs.length} jobs for this candidate. Resume: ${JSON.stringify(resume_data).slice(0, 2000)}. Jobs: ${JSON.stringify(jobs.map(j => ({ title: j.job_title, desc: j.job_description.slice(0, 500) })))}}`;
+    const schema = `{ results: [{ index: number, match_score: number, match_explanation: string, tailored_summary: string, tailored_skills: [string], cover_letter_opening: string, cover_letter_body: string, cover_letter_closing: string }] }`;
+    
+    const scoringResult = await generateStructuredContent(prompt, "You are a career coach.", schema);
+    const qualified = scoringResult.results.filter(r => r.match_score >= min_score).slice(0, max_applications);
+
+    // 4. Queue them
+    const inserts = qualified.map(r => {
+      const job = jobs[r.index];
+      if (!job) return null;
+      return {
+        user_id: user.id,
+        resume_id,
+        campaign_id: campaign.id,
+        job_title: job.job_title,
+        company: job.employer_name,
+        location: `${job.job_city || ''}, ${job.job_state || ''}`,
+        job_type: job.job_is_remote ? 'Remote' : 'On-site',
+        job_url: job.job_apply_link,
+        match_score: r.match_score,
+        match_explanation: r.match_explanation,
+        tailored_resume_data: { ...resume_data, summary: r.tailored_summary, skills: r.tailored_skills },
+        cover_letter_data: { greeting: `Dear Hiring Manager at ${job.employer_name},`, opening: r.cover_letter_opening, body: r.cover_letter_body, closing: r.cover_letter_closing }
+      };
+    }).filter(Boolean);
+
+    if (inserts.length > 0) {
+      await supabaseAdmin.from('ai_apply_queue').insert(inserts);
+    }
+
+    // 5. Finalize campaign
+    await supabaseAdmin.from('ai_apply_campaigns').update({
+      status: 'completed',
+      jobs_searched: jobs.length,
+      jobs_scored: scoringResult.results.length,
+      jobs_queued: inserts.length,
+      completed_at: new Date().toISOString(),
+    }).eq('id', campaign.id);
+
+    res.json({ queued: inserts.length, total_found: jobs.length, total_scored: scoringResult.results.length });
+
+  } catch (error) {
+    console.error('AI apply error:', error);
+    res.status(500).json({ error: 'Campaign failed' });
   }
 });
 
