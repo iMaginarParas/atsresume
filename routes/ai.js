@@ -118,6 +118,7 @@ router.post('/ai-apply', authenticateRequest, async (req, res) => {
     if (!JSEARCH_API_KEY) return res.status(503).json({ error: 'Search service unavailable' });
 
     // 1. Create campaign record
+    console.log(`Starting AI Apply for user ${user.id}...`);
     const { data: campaign, error: campErr } = await supabaseAdmin
       .from('ai_apply_campaigns')
       .insert({
@@ -133,9 +134,13 @@ router.post('/ai-apply', authenticateRequest, async (req, res) => {
       .select()
       .single();
 
-    if (campErr) throw campErr;
+    if (campErr) {
+      console.error("Campaign creation error:", campErr);
+      throw campErr;
+    }
 
-    // 2. Search Jobs (Simplified for now, calling JSearch)
+    // 2. Search Jobs
+    console.log(`Searching jobs for query: ${resume_title}...`);
     const searchQuery = resume_title || 'software engineer';
     const searchRes = await fetch(`https://jsearch.p.rapidapi.com/search?query=${encodeURIComponent(searchQuery)}&location=${encodeURIComponent(location || '')}`, {
       headers: {
@@ -143,20 +148,34 @@ router.post('/ai-apply', authenticateRequest, async (req, res) => {
         'x-rapidapi-key': JSEARCH_API_KEY
       }
     });
+    
+    if (!searchRes.ok) {
+      const errText = await searchRes.text();
+      console.error("JSearch API error:", errText);
+      throw new Error(`Job search failed: ${searchRes.statusText}`);
+    }
+
     const searchData = await searchRes.json();
-    const jobs = (searchData.data || []).slice(0, 10); // Batch of 10
+    const jobs = (searchData.data || []).slice(0, 10);
+    console.log(`Found ${jobs.length} jobs to process.`);
 
     if (jobs.length === 0) {
       await supabaseAdmin.from('ai_apply_campaigns').update({ status: 'completed', jobs_searched: 0 }).eq('id', campaign.id);
       return res.json({ queued: 0, total_found: 0 });
     }
 
-    // 3. AI Scoring (Using Gemini)
+    // 3. AI Scoring
+    console.log("Scoring jobs with Gemini...");
     const prompt = `Score these ${jobs.length} jobs for this candidate. Resume: ${JSON.stringify(resume_data).slice(0, 2000)}. Jobs: ${JSON.stringify(jobs.map(j => ({ title: j.job_title, desc: j.job_description.slice(0, 500) })))}}`;
     const schema = `{ results: [{ index: number, match_score: number, match_explanation: string, tailored_summary: string, tailored_skills: [string], cover_letter_opening: string, cover_letter_body: string, cover_letter_closing: string }] }`;
     
     const scoringResult = await generateStructuredContent(prompt, "You are a career coach.", schema);
+    if (!scoringResult || !scoringResult.results) {
+      throw new Error("AI Scoring returned invalid data");
+    }
+
     const qualified = scoringResult.results.filter(r => r.match_score >= min_score).slice(0, max_applications);
+    console.log(`${qualified.length} jobs qualified.`);
 
     // 4. Queue them
     const inserts = qualified.map(r => {
@@ -179,7 +198,9 @@ router.post('/ai-apply', authenticateRequest, async (req, res) => {
     }).filter(Boolean);
 
     if (inserts.length > 0) {
-      await supabaseAdmin.from('ai_apply_queue').insert(inserts);
+      console.log(`Inserting ${inserts.length} jobs into queue...`);
+      const { error: insErr } = await supabaseAdmin.from('ai_apply_queue').insert(inserts);
+      if (insErr) console.error("Queue insertion error:", insErr);
     }
 
     // 5. Finalize campaign
