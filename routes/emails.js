@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateRequest } = require('../middleware/auth');
-const fetch = require('node-fetch'); // Node 18+ has fetch, but good to be safe
+// Native fetch is available in Node.js 18+ (Railway is using v22)
 
 router.post('/send-outreach', authenticateRequest, async (req, res) => {
   const { to, subject, body: emailBody, fromName, replyTo, position, company, resumePdfBase64, resumeFilename } = req.body;
