@@ -1,10 +1,5 @@
-const require = (name) => {
-  if (name === 'node-fetch') return fetch;
-  return global[name];
-};
-
 /**
- * Generate structured JSON output using Direct Fetch (Bypassing SDK)
+ * Generate structured JSON output using Direct Fetch (Native Node 22 fetch)
  */
 async function generateStructuredContent(prompt, systemPrompt = "", schemaDescription = "") {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -14,7 +9,7 @@ async function generateStructuredContent(prompt, systemPrompt = "", schemaDescri
     contents: [
       {
         role: "user",
-        parts: [{ text: `${systemPrompt}\n\nTASK: ${prompt}\n\nIMPORTANT: Return ONLY valid JSON: ${schemaDescription}` }]
+        parts: [{ text: `${systemPrompt}\n\nTASK: ${prompt}\n\nIMPORTANT: Return ONLY valid JSON matching this schema: ${schemaDescription}` }]
       }
     ],
     generationConfig: {
@@ -33,8 +28,12 @@ async function generateStructuredContent(prompt, systemPrompt = "", schemaDescri
     const data = await response.json();
     
     if (!response.ok) {
-      console.error("Gemini Direct Fetch Error:", data);
+      console.error("Gemini Direct Fetch Error:", JSON.stringify(data, null, 2));
       throw new Error(`Gemini API failed: ${data.error?.message || response.statusText}`);
+    }
+
+    if (!data.candidates || !data.candidates[0]) {
+      throw new Error("No candidates returned from Gemini");
     }
 
     const text = data.candidates[0].content.parts[0].text;
@@ -71,7 +70,6 @@ async function generateContent(message, systemPrompt = "") {
  * Stream Content (Direct Fetch Shim)
  */
 async function streamContent(messages) {
-  // Simple shim for streaming since we are bypassing SDK
   const content = await generateContent(messages[messages.length-1].content);
   return {
     async *[Symbol.asyncIterator]() {
