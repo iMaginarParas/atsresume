@@ -3,7 +3,7 @@
  */
 async function generateStructuredContent(prompt, systemPrompt = "", schemaDescription = "") {
   const apiKey = process.env.GEMINI_API_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`;
 
   const body = {
     contents: [
@@ -49,7 +49,7 @@ async function generateStructuredContent(prompt, systemPrompt = "", schemaDescri
  */
 async function generateContent(message, systemPrompt = "") {
   const apiKey = process.env.GEMINI_API_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`;
 
   const body = {
     contents: [{ parts: [{ text: systemPrompt ? `${systemPrompt}\n\n${message}` : message }] }]
