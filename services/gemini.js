@@ -1,104 +1,83 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-require('dotenv').config();
-
-if (!process.env.GEMINI_API_KEY) {
-  console.error("CRITICAL: GEMINI_API_KEY is missing from environment variables!");
-} else {
-  console.log(`GEMINI_API_KEY is present. Length: ${process.env.GEMINI_API_KEY.length}`);
-}
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "dummy_key");
-
-// Fallback list of models to try
-const MODEL_NAMES = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"];
-
-function getModel(name = MODEL_NAMES[0]) {
-  // Let the SDK handle the versioning automatically
-  return genAI.getGenerativeModel({ model: name });
-}
+const require = (name) => {
+  if (name === 'node-fetch') return fetch;
+  return global[name];
+};
 
 /**
- * Generate AI content with optional system prompt
- */
-async function generateContent(message, systemPrompt = "") {
-  try {
-    const model = getModel();
-    const fullPrompt = systemPrompt ? `${systemPrompt}\n\nUser: ${message}` : message;
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    return response.text();
-  } catch (error) {
-    console.error("Gemini generateContent error:", error);
-    throw error;
-  }
-}
-
-/**
- * Generate structured JSON output using Gemini
- * Note: We use a prompt-based approach for stability across all Gemini models
+ * Generate structured JSON output using Direct Fetch (Bypassing SDK)
  */
 async function generateStructuredContent(prompt, systemPrompt = "", schemaDescription = "") {
-  let lastError;
-  
-  for (const modelName of MODEL_NAMES) {
-    try {
-      console.log(`Trying Gemini model: ${modelName}`);
-      const model = getModel(modelName);
-      
-      const fullPrompt = `
-        ${systemPrompt}
-        
-        TASK: ${prompt}
-        
-        IMPORTANT: Return ONLY a valid JSON object matching this description: ${schemaDescription}
-        Do not include any markdown formatting like \`\`\`json or extra text.
-      `;
-      
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: fullPrompt }] }]
-      });
+  const apiKey = process.env.GEMINI_API_KEY;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-      const response = await result.response;
-      const text = response.text().trim();
-      
-      let jsonStr = text;
-      if (text.includes("```")) {
-        jsonStr = text.split("```")[1].replace(/^json/, "").trim();
+  const body = {
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: `${systemPrompt}\n\nTASK: ${prompt}\n\nIMPORTANT: Return ONLY valid JSON: ${schemaDescription}` }]
       }
-      
-      return JSON.parse(jsonStr);
-    } catch (error) {
-      console.error(`Gemini error with ${modelName}:`, error.message);
-      lastError = error;
-      // If it's not a 404, we might want to stop, but for now we try all models
-      continue;
+    ],
+    generationConfig: {
+      responseMimeType: "application/json"
     }
+  };
+
+  try {
+    console.log("Attempting direct fetch to Gemini...");
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      console.error("Gemini Direct Fetch Error:", data);
+      throw new Error(`Gemini API failed: ${data.error?.message || response.statusText}`);
+    }
+
+    const text = data.candidates[0].content.parts[0].text;
+    return JSON.parse(text);
+  } catch (error) {
+    console.error("Direct Fetch Catch:", error.message);
+    throw new Error(`AI_DIRECT_ERROR: ${error.message}`);
   }
-  
-  throw new Error(`AI_STRUCTURED_ERROR: All models failed. Last error: ${lastError.message}`);
 }
 
 /**
- * Handle streaming AI response
+ * Basic Content Generation (Direct Fetch)
+ */
+async function generateContent(message, systemPrompt = "") {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+  const body = {
+    contents: [{ parts: [{ text: systemPrompt ? `${systemPrompt}\n\n${message}` : message }] }]
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || "API Error");
+  return data.candidates[0].content.parts[0].text;
+}
+
+/**
+ * Stream Content (Direct Fetch Shim)
  */
 async function streamContent(messages) {
-  try {
-    const model = getModel();
-    // Porting streaming logic to Gemini SDK format
-    const chat = model.startChat({
-      history: messages.slice(0, -1).map(m => ({
-        role: m.role === 'system' ? 'user' : m.role, // Gemini uses user/model
-        parts: [{ text: m.content }],
-      })),
-    });
-
-    const lastMessage = messages[messages.length - 1].content;
-    const result = await model.generateContentStream(lastMessage);
-    return result.stream;
-  } catch (error) {
-    console.error("Gemini streamContent error:", error);
-    throw error;
-  }
+  // Simple shim for streaming since we are bypassing SDK
+  const content = await generateContent(messages[messages.length-1].content);
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { text: () => content };
+    }
+  };
 }
 
 module.exports = { generateContent, generateStructuredContent, streamContent };
