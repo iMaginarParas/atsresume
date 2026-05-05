@@ -10,7 +10,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "dummy_key");
 const stableGenAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "dummy_key");
 
 // Fallback list of models to try
-const MODEL_NAMES = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"];
+const MODEL_NAMES = ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-pro"];
 
 function getModel(name = MODEL_NAMES[0]) {
   // Use stable v1 API explicitly
