@@ -1,37 +1,19 @@
 const MODEL_NAMES = [
+  "gemini-flash-lite-latest",
   "gemini-pro-latest",
-  "gemini-flash-lite-latest"
+  "gemini-1.5-flash",
+  "gemini-1.5-pro"
 ];
 
-async function listAvailableModels() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-  try {
-    const response = await fetch(url);
-    const data = await response.json();
-    const modelNames = (data.models || []).map(m => m.name);
-    console.log("AVAILABLE MODELS FOR YOUR KEY:", JSON.stringify(modelNames));
-    return modelNames;
-  } catch (e) {
-    console.error("Failed to list models:", e.message);
-    return [];
-  }
-}
-
 /**
- * Generate structured JSON output using Direct Fetch (Native Node 22 fetch)
+ * Generate structured JSON output using Direct Fetch with Fallback Loop
  */
 async function generateStructuredContent(prompt, systemPrompt = "", schemaDescription = "") {
-  const discoveredModels = await listAvailableModels();
   const apiKey = process.env.GEMINI_API_KEY;
   let lastError;
 
-  // Try the user's preferred models first, then fall back to the discovered list
-  const modelsToTry = [...new Set([...MODEL_NAMES, ...discoveredModels.map(m => m.replace("models/", ""))])];
-
-  for (const modelName of modelsToTry) {
+  for (const modelName of MODEL_NAMES) {
     try {
-      console.log(`Scanning model: ${modelName}`);
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
       const body = {
@@ -48,14 +30,10 @@ async function generateStructuredContent(prompt, systemPrompt = "", schemaDescri
       const data = await response.json();
       
       if (!response.ok) {
-        console.warn(`Model ${modelName} rejected: ${data.error?.message}`);
         lastError = data.error?.message || response.statusText;
-        
-        // If it's a rate limit error, we might want to wait, but for scanning we just skip
         continue;
       }
 
-      console.log(`SUCCESS! Found working model: ${modelName}`);
       return JSON.parse(data.candidates[0].content.parts[0].text);
     } catch (error) {
       lastError = error.message;
@@ -63,15 +41,14 @@ async function generateStructuredContent(prompt, systemPrompt = "", schemaDescri
     }
   }
 
-  throw new Error(`AI_SCAN_ERROR: All ${modelsToTry.length} models failed. Last error: ${lastError}`);
+  throw new Error(`AI_ERROR: All models failed. Last error: ${lastError}`);
 }
 
 /**
- * Basic Content Generation (Direct Fetch)
+ * Basic Content Generation
  */
 async function generateContent(message, systemPrompt = "") {
   const apiKey = process.env.GEMINI_API_KEY;
-  // Use first model for simple generation
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAMES[0]}:generateContent?key=${apiKey}`;
 
   const body = {
@@ -90,7 +67,7 @@ async function generateContent(message, systemPrompt = "") {
 }
 
 /**
- * Stream Content (Direct Fetch Shim)
+ * Stream Content Shim
  */
 async function streamContent(messages) {
   const content = await generateContent(messages[messages.length-1].content);
