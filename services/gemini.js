@@ -1,6 +1,6 @@
 const MODEL_NAMES = [
-  "gemini-2.0-flash",
-  "gemini-flash-latest"
+  "gemini-pro-latest",
+  "gemini-flash-lite-latest"
 ];
 
 async function listAvailableModels() {
