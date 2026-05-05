@@ -3,10 +3,26 @@ const MODEL_NAMES = [
   "gemini-1.5-flash"
 ];
 
+async function listAvailableModels() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    const modelNames = (data.models || []).map(m => m.name);
+    console.log("AVAILABLE MODELS FOR YOUR KEY:", JSON.stringify(modelNames));
+    return modelNames;
+  } catch (e) {
+    console.error("Failed to list models:", e.message);
+    return [];
+  }
+}
+
 /**
  * Generate structured JSON output using Direct Fetch (Native Node 22 fetch)
  */
 async function generateStructuredContent(prompt, systemPrompt = "", schemaDescription = "") {
+  await listAvailableModels(); // DISCOVERY STEP
   const apiKey = process.env.GEMINI_API_KEY;
   let lastError;
 
