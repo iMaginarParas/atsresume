@@ -5,8 +5,10 @@ const rateLimit = require('express-rate-limit');
 const aiRoutes = require('./routes/ai');
 const emailRoutes = require('./routes/emails');
 const authRoutes = require('./routes/auth');
+const paymentRoutes = require('./routes/payments');
 
 const app = express();
+app.set('trust proxy', 1);
 const port = process.env.PORT || 3000;
 
 // Global Rate Limiting
@@ -31,6 +33,7 @@ app.use(globalLimiter);
 app.use('/api/ai', aiLimiter, aiRoutes);
 app.use('/api/emails', globalLimiter, emailRoutes);
 app.use('/api/auth', globalLimiter, authRoutes);
+app.use('/api/payments', globalLimiter, paymentRoutes);
 
 // Health check
 app.get('/', (req, res) => {
