@@ -22,25 +22,21 @@ async function listAvailableModels() {
  * Generate structured JSON output using Direct Fetch (Native Node 22 fetch)
  */
 async function generateStructuredContent(prompt, systemPrompt = "", schemaDescription = "") {
-  await listAvailableModels(); // DISCOVERY STEP
+  const discoveredModels = await listAvailableModels();
   const apiKey = process.env.GEMINI_API_KEY;
   let lastError;
 
-  for (const modelName of MODEL_NAMES) {
+  // Try the user's preferred models first, then fall back to the discovered list
+  const modelsToTry = [...new Set([...MODEL_NAMES, ...discoveredModels.map(m => m.replace("models/", ""))])];
+
+  for (const modelName of modelsToTry) {
     try {
-      console.log(`Trying Gemini model: ${modelName}`);
+      console.log(`Scanning model: ${modelName}`);
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
       const body = {
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: `${systemPrompt}\n\nTASK: ${prompt}\n\nIMPORTANT: Return ONLY valid JSON matching this schema: ${schemaDescription}` }]
-          }
-        ],
-        generationConfig: {
-          responseMimeType: "application/json"
-        }
+        contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\nTASK: ${prompt}\n\nIMPORTANT: Return ONLY valid JSON: ${schemaDescription}` }] }],
+        generationConfig: { responseMimeType: "application/json" }
       };
 
       const response = await fetch(url, {
@@ -52,26 +48,22 @@ async function generateStructuredContent(prompt, systemPrompt = "", schemaDescri
       const data = await response.json();
       
       if (!response.ok) {
-        console.warn(`Model ${modelName} failed:`, data.error?.message);
+        console.warn(`Model ${modelName} rejected: ${data.error?.message}`);
         lastError = data.error?.message || response.statusText;
-        continue; // Try next model
-      }
-
-      if (!data.candidates || !data.candidates[0]) {
-        lastError = "No candidates returned";
+        
+        // If it's a rate limit error, we might want to wait, but for scanning we just skip
         continue;
       }
 
-      const text = data.candidates[0].content.parts[0].text;
-      return JSON.parse(text);
+      console.log(`SUCCESS! Found working model: ${modelName}`);
+      return JSON.parse(data.candidates[0].content.parts[0].text);
     } catch (error) {
-      console.error(`Fetch catch with ${modelName}:`, error.message);
       lastError = error.message;
       continue;
     }
   }
 
-  throw new Error(`AI_DIRECT_ERROR: All models failed. Last error: ${lastError}`);
+  throw new Error(`AI_SCAN_ERROR: All ${modelsToTry.length} models failed. Last error: ${lastError}`);
 }
 
 /**
