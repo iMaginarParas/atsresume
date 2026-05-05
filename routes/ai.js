@@ -231,8 +231,27 @@ router.post('/search-jobs', authenticateRequest, async (req, res) => {
     const JSEARCH_API_KEY = process.env.RAPIDAPI_KEY;
     if (!JSEARCH_API_KEY) return res.status(503).json({ error: 'Search service unavailable' });
 
-    const searchQuery = query || resume_title || 'software engineer';
-    const searchRes = await fetch(`https://jsearch.p.rapidapi.com/search?query=${encodeURIComponent(searchQuery)}&location=${encodeURIComponent(location || '')}`, {
+    // 1. Sophisticated Query Building
+    const skills = resume_data?.skills || [];
+    const experience = resume_data?.experience || [];
+    const latestTitle = experience[0]?.title || resume_title || "";
+    
+    let searchQuery = query || latestTitle || (skills.length > 0 ? skills.slice(0, 3).join(" ") : "software engineer");
+    
+    const params = new URLSearchParams({
+      query: searchQuery,
+      location: location || '',
+      page: "1",
+      num_pages: "1",
+    });
+
+    // 2. Job Type / Remote Filtering
+    if (job_type && job_type !== "all") {
+      const remoteFilter = job_type === "remote" ? "true" : "false";
+      params.set("remote_jobs_only", remoteFilter);
+    }
+
+    const searchRes = await fetch(`https://jsearch.p.rapidapi.com/search?${params.toString()}`, {
       headers: {
         'x-rapidapi-host': 'jsearch.p.rapidapi.com',
         'x-rapidapi-key': JSEARCH_API_KEY
@@ -244,26 +263,56 @@ router.post('/search-jobs', authenticateRequest, async (req, res) => {
     const searchData = await searchRes.json();
     const rawJobs = (searchData.data || []).slice(0, 15);
 
-    // AI Match Scoring
-    const prompt = `Score these jobs for this candidate. Resume: ${JSON.stringify(resume_data).slice(0, 2000)}. Jobs: ${JSON.stringify(rawJobs.map(j => ({ title: j.job_title, company: j.employer_name, desc: j.job_description.slice(0, 500) })))}}`;
+    if (rawJobs.length === 0) return res.json({ jobs: [] });
+
+    // 3. AI Match Scoring (Robust Prompt)
+    const prompt = `Score how well each job matches this resume. Return a JSON array of objects with "index" (0-based), "match_score" (0-100), and "match_explanation" (1 sentence).
+
+Resume:
+- Title: ${resume_title}
+- Skills: ${skills.join(", ")}
+- Latest Role: ${latestTitle}
+
+Jobs:
+${rawJobs.map((j, i) => `${i}. ${j.job_title} at ${j.employer_name} - ${j.job_description?.slice(0, 150)}`).join("\n")}
+
+Return ONLY a JSON array.`;
+
     const schema = `{ results: [{ index: number, match_score: number, match_explanation: string }] }`;
+    const scoringResult = await generateStructuredContent(prompt, "You are an expert career matching specialist.", schema);
     
-    const scoringResult = await generateStructuredContent(prompt, "You are a career matching expert.", schema);
-    
-    const jobs = rawJobs.map((job, i) => {
-      const match = scoringResult.results.find(r => r.index === i);
+    // 4. Normalization and Source Detection
+    const jobs = rawJobs.map((j, i) => {
+      const match = scoringResult.results?.find(r => r.index === i);
+      
+      // Source platform detection
+      let source = "Job Board";
+      const applyLink = j.job_apply_link || j.job_google_link || "";
+      const publisher = (j.job_publisher || "").toLowerCase();
+      
+      if (publisher.includes("linkedin") || applyLink.includes("linkedin.com")) source = "LinkedIn";
+      else if (publisher.includes("indeed") || applyLink.includes("indeed.com")) source = "Indeed";
+      else if (publisher.includes("glassdoor") || applyLink.includes("glassdoor.com")) source = "Glassdoor";
+      else if (publisher.includes("naukri") || applyLink.includes("naukri.com")) source = "Naukri";
+      else if (publisher.includes("google")) source = "Google Jobs";
+      else if (publisher.includes("ziprecruiter")) source = "ZipRecruiter";
+      else if (publisher.includes("monster")) source = "Monster";
+      else if (publisher.includes("bayt")) source = "Bayt";
+      else if (j.job_publisher) source = j.job_publisher;
+
       return {
-        job_title: job.job_title,
-        company: job.employer_name,
-        location: `${job.job_city || ''}, ${job.job_state || ''}`,
-        job_type: job.job_is_remote ? 'Remote' : 'On-site',
-        description: job.job_description,
-        url: job.job_apply_link,
-        posted_date: new Date(job.job_posted_at_datetime_utc).toLocaleDateString(),
+        job_id: j.job_id || null,
+        job_title: j.job_title || "Untitled",
+        company: j.employer_name || "Unknown",
+        location: j.job_city ? `${j.job_city}, ${j.job_state || ''}` : j.job_country || "Not specified",
+        job_type: j.job_is_remote ? "Remote" : "On-site",
+        description: j.job_description || "",
+        url: applyLink,
+        posted_date: j.job_posted_at_datetime_utc ? j.job_posted_at_datetime_utc.split("T")[0] : null,
         match_score: match?.match_score || 0,
-        match_explanation: match?.match_explanation || "No explanation provided.",
-        employer_logo: job.employer_logo,
-        source: "JSearch"
+        match_explanation: match?.match_explanation || "Analyzing fit...",
+        employer_logo: j.employer_logo || null,
+        source
       };
     });
 
@@ -313,6 +362,42 @@ router.post('/recruiter-analyze', authenticateRequest, async (req, res) => {
   } catch (error) {
     console.error('Recruiter analyze error:', error);
     res.status(500).json({ error: 'Analysis failed' });
+  }
+});
+
+/**
+ * Generate Cover Letter Logic
+ */
+router.post('/generate-cover-letter', authenticateRequest, async (req, res) => {
+  const { resumeData, jobDescription, tone } = req.body;
+
+  try {
+    const personalInfo = resumeData?.personalInfo || {};
+    const prompt = `Generate a professionally formatted cover letter.
+      Tone: ${tone || "professional"}
+      Applicant: ${personalInfo.fullName || "Applicant"}
+      Email: ${personalInfo.email || ""}
+      Job Description: ${jobDescription}`;
+
+    const schema = `{ 
+      applicant_name: string, 
+      date: string, 
+      company_name: string, 
+      subject_line: string, 
+      greeting: string, 
+      opening: string, 
+      value_experience: string, 
+      why_company: string, 
+      closing: string, 
+      sign_off: string, 
+      suggested_title: string 
+    }`;
+
+    const result = await generateStructuredContent(prompt, "You are an expert cover letter writer.", schema);
+    res.json(result);
+  } catch (error) {
+    console.error('Generate cover letter route error:', error);
+    res.status(500).json({ error: 'AI processing failed' });
   }
 });
 
