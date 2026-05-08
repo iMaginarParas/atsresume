@@ -504,18 +504,27 @@ router.post('/auto-apply', authenticateRequest, async (req, res) => {
  * Export Resume Logic (txt/docx)
  */
 router.post('/export-resume', authenticateRequest, async (req, res) => {
-  const { resumeData, format, sectionOrder } = req.body;
+  const { resumeData, format } = req.body;
 
   try {
     if (!resumeData || !format) return res.status(400).json({ error: "Missing resumeData or format" });
     if (!["txt", "docx"].includes(format)) return res.status(400).json({ error: "Unsupported format" });
 
-    // Implementation of buildPlainText and buildDocxZip would be required here.
-    // For now, we return a success indicator or mock base64 to allow the UI to progress.
-    // In a real migration, we'd copy the helper functions from Supabase.
+    const { buildPlainText, buildDocx } = require('../services/export');
     
-    // MOCK for now to demonstrate the route exists
-    res.json({ data: "BASE64_MOCK", mimeType: format === "txt" ? "text/plain" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    if (format === "txt") {
+      const text = buildPlainText(resumeData);
+      return res.json({ 
+        data: Buffer.from(text).toString('base64'), 
+        mimeType: "text/plain" 
+      });
+    } else if (format === "docx") {
+      const base64 = await buildDocx(resumeData);
+      return res.json({ 
+        data: base64, 
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
+      });
+    }
   } catch (error) {
     console.error("Export error:", error);
     res.status(500).json({ error: "Failed to export resume" });
