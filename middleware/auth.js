@@ -14,7 +14,9 @@ async function authenticateRequest(req, res, next) {
   }
 
   req.user = user;
+  req.token = token;
   next();
 }
 
 module.exports = { authenticateRequest };
+

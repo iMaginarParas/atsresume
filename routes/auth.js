@@ -2,6 +2,21 @@ const express = require('express');
 const router = express.Router();
 const { authenticateRequest } = require('../middleware/auth');
 const { supabase: supabaseAdmin } = require('../services/supabase');
+const { createClient } = require('@supabase/supabase-js');
+
+// Helper to dynamically get the correct Supabase client
+const getSupabaseClient = (req) => {
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return supabaseAdmin;
+  }
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${req.token}`,
+      },
+    },
+  });
+};
 
 /**
  * Assign User Role
@@ -17,8 +32,10 @@ router.post('/assign-role', authenticateRequest, async (req, res) => {
       return res.status(400).json({ error: "Invalid role" });
     }
 
+    const client = getSupabaseClient(req);
+
     // Check if user already has a role
-    const { data: existing, error: fetchError } = await supabaseAdmin
+    const { data: existing, error: fetchError } = await client
       .from("user_roles")
       .select("id, role")
       .eq("user_id", user.id)
@@ -29,7 +46,7 @@ router.post('/assign-role', authenticateRequest, async (req, res) => {
     }
 
     // Insert the role
-    const { error: insertError } = await supabaseAdmin
+    const { error: insertError } = await client
       .from("user_roles")
       .insert({ user_id: user.id, role });
 
@@ -46,3 +63,4 @@ router.post('/assign-role', authenticateRequest, async (req, res) => {
 });
 
 module.exports = router;
+

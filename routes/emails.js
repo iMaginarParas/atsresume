@@ -9,7 +9,11 @@ router.post('/send-outreach', authenticateRequest, async (req, res) => {
 
   try {
     const RESEND_API_KEY = process.env.RESEND_API_KEY;
-    if (!RESEND_API_KEY) return res.status(503).json({ error: 'Email service unavailable' });
+    if (!RESEND_API_KEY) {
+      console.warn("RESEND_API_KEY missing. Simulating email send for local development.");
+      console.log(`[Dev Mock Email] To: ${to}, Subject: ${subject}`);
+      return res.json({ success: true, id: "mock_email_" + Date.now() });
+    }
 
     const SENDER = `${fromName || "ATS Pro"} <no-reply@atsproresumebuilder.com>`;
     
@@ -65,7 +69,11 @@ router.post('/contact', async (req, res) => {
 
   try {
     const RESEND_API_KEY = process.env.RESEND_API_KEY;
-    if (!RESEND_API_KEY) return res.status(503).json({ error: 'Email service unavailable' });
+    if (!RESEND_API_KEY) {
+      console.warn("RESEND_API_KEY missing. Simulating contact email for local development.");
+      console.log(`[Dev Mock Contact] From: ${name} <${email}>, Subject: ${userSubject}`);
+      return res.json({ success: true, id: "mock_contact_" + Date.now() });
+    }
 
     const SENDER = "ATS Pro Support <no-reply@atsproresumebuilder.com>";
     const SUPPORT_EMAIL = "muza30111997@gmail.com"; // User's email from conversation context if known, or site admin

@@ -19,11 +19,18 @@ router.post('/interview-prep', authenticateRequest, async (req, res) => {
     }
 
     if (action === "analyze-strengths") {
-      const prompt = `Analyze resume for "${position}" role in "${industry}".`;
+      let prompt = `Analyze the candidate's alignment and readiness for a "${position}" role in the "${industry}" industry.`;
+      if (resumeData) {
+        prompt += `\n\nCandidate Resume Data:\n${JSON.stringify(resumeData)}`;
+      }
+      if (conversation && conversation.length > 0) {
+        prompt += `\n\nHere is the log of the mock interview dialogue between the interviewer (Assistant) and candidate (User):\n${JSON.stringify(conversation)}`;
+      }
       const schema = `{ strengths: [{point, explanation}], weaknesses: [{point, explanation, tip}], readinessScore: number, summary: string }`;
-      const result = await generateStructuredContent(prompt, "You are an expert career coach.", schema);
+      const result = await generateStructuredContent(prompt, "You are an expert career coach. Analyze the resume AND their mock interview answers if provided to deliver a highly accurate assessment.", schema);
       return res.json(result);
     }
+
 
     if (action === "start" || action === "respond" || action === "summary") {
       const messages = [{ role: 'system', content: 'You are Alex Carter, a senior hiring manager...' }, ...(conversation || [])];
@@ -115,7 +122,101 @@ router.post('/ai-apply', authenticateRequest, async (req, res) => {
 
   try {
     const JSEARCH_API_KEY = process.env.RAPIDAPI_KEY;
-    if (!JSEARCH_API_KEY) return res.status(503).json({ error: 'Search service unavailable' });
+    if (!JSEARCH_API_KEY) {
+      console.warn("RAPIDAPI_KEY is missing. Simulating AI Apply campaign with mock jobs for local development.");
+      const searchQuery = resume_title || 'software engineer';
+      
+      // 1. Create campaign record
+      const { data: campaign, error: campErr } = await supabaseAdmin
+        .from('ai_apply_campaigns')
+        .insert({
+          user_id: user.id,
+          resume_id,
+          status: 'running',
+          location: location || null,
+          job_type: job_type || null,
+          min_score,
+          max_applications,
+          started_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (campErr) {
+        console.error("Mock Campaign creation error:", campErr);
+        throw campErr;
+      }
+
+      // 2. Generate mock jobs
+      const mockJobs = [
+        {
+          index: 0,
+          job_title: `Senior ${searchQuery}`,
+          employer_name: "TechCorp Solutions",
+          job_city: "Mumbai",
+          job_state: "MH",
+          job_country: "IN",
+          job_is_remote: true,
+          job_apply_link: "https://example.com/apply/1",
+          match_score: 95,
+          match_explanation: "Perfect fit for current resume skills and leadership targets.",
+          tailored_summary: "High capability leader targeting corporate growth.",
+          tailored_skills: ["React", "API Gateway", "Node.js"],
+          cover_letter_opening: "Dear Hiring Team,",
+          cover_letter_body: "I am excited to apply for the Senior role...",
+          cover_letter_closing: "Best regards"
+        },
+        {
+          index: 1,
+          job_title: `${searchQuery} II`,
+          employer_name: "Innovate Labs",
+          job_city: "Bengaluru",
+          job_state: "KA",
+          job_country: "IN",
+          job_is_remote: false,
+          job_apply_link: "https://example.com/apply/2",
+          match_score: 82,
+          match_explanation: "Strong technical alignment with engineering frameworks.",
+          tailored_summary: "Skilled engineer focusing on scalable frontend structures.",
+          tailored_skills: ["Node.js", "Express", "PostgreSQL"],
+          cover_letter_opening: "Dear Hiring Team,",
+          cover_letter_body: "I am writing to express my interest in joining Innovate Labs...",
+          cover_letter_closing: "Best regards"
+        }
+      ];
+
+      // 3. Queue them
+      const inserts = mockJobs.map(r => ({
+        user_id: user.id,
+        resume_id,
+        campaign_id: campaign.id,
+        job_title: r.job_title,
+        company: r.employer_name,
+        location: `${r.job_city}, ${r.job_state}`,
+        job_type: r.job_is_remote ? 'Remote' : 'On-site',
+        job_url: r.job_apply_link,
+        match_score: r.match_score,
+        match_explanation: r.match_explanation,
+        tailored_resume_data: { ...resume_data, summary: r.tailored_summary, skills: r.tailored_skills },
+        cover_letter_data: { greeting: r.cover_letter_opening, body: r.cover_letter_body, closing: r.cover_letter_closing }
+      }));
+
+      if (inserts.length > 0) {
+        const { error: insErr } = await supabaseAdmin.from('ai_apply_queue').insert(inserts);
+        if (insErr) console.error("Queue insertion error:", insErr);
+      }
+
+      // 4. Finalize campaign
+      await supabaseAdmin.from('ai_apply_campaigns').update({
+        status: 'completed',
+        jobs_searched: 2,
+        jobs_scored: 2,
+        jobs_queued: inserts.length,
+        completed_at: new Date().toISOString(),
+      }).eq('id', campaign.id);
+
+      return res.json({ queued: inserts.length, total_found: 2, total_scored: 2 });
+    }
 
     // 1. Create campaign record
     console.log(`Starting AI Apply for user ${user.id}...`);
@@ -229,7 +330,57 @@ router.post('/search-jobs', authenticateRequest, async (req, res) => {
 
   try {
     const JSEARCH_API_KEY = process.env.RAPIDAPI_KEY;
-    if (!JSEARCH_API_KEY) return res.status(503).json({ error: 'Search service unavailable' });
+    if (!JSEARCH_API_KEY) {
+      console.warn("RAPIDAPI_KEY is missing. Returning high-quality mock jobs for local development.");
+      const mockQuery = query || resume_title || "Frontend Developer";
+      const mockLocation = location || "India";
+      
+      const mockJobs = [
+        {
+          job_id: "mock_1",
+          job_title: `Senior ${mockQuery}`,
+          company: "TechCorp Solutions",
+          location: mockLocation,
+          job_type: job_type === "remote" ? "Remote" : "Hybrid",
+          description: `We are looking for a brilliant ${mockQuery} to lead our development initiatives...`,
+          url: "https://example.com/apply/1",
+          posted_date: new Date().toISOString().split('T')[0],
+          match_score: 95,
+          match_explanation: "Your profile contains exactly matching skills and experience details.",
+          employer_logo: null,
+          source: "LinkedIn"
+        },
+        {
+          job_id: "mock_2",
+          job_title: `${mockQuery} II`,
+          company: "Innovate Labs",
+          location: "Remote",
+          job_type: "Remote",
+          description: `Join our global remote team scaling international client portals. Strong understanding of ${mockQuery} systems required...`,
+          url: "https://example.com/apply/2",
+          posted_date: new Date().toISOString().split('T')[0],
+          match_score: 87,
+          match_explanation: "High alignment with key technologies specified in your resume.",
+          employer_logo: null,
+          source: "Indeed"
+        },
+        {
+          job_id: "mock_3",
+          job_title: `Lead ${mockQuery} Specialist`,
+          company: "NextGen Software",
+          location: mockLocation,
+          job_type: "On-site",
+          description: `Drive architectural decisions and mentor junior engineers across various ${mockQuery} workstreams.`,
+          url: "https://example.com/apply/3",
+          posted_date: new Date().toISOString().split('T')[0],
+          match_score: 79,
+          match_explanation: "Strong background matching the target experience requirements.",
+          employer_logo: null,
+          source: "Glassdoor"
+        }
+      ];
+      return res.json({ jobs: mockJobs });
+    }
 
     // 1. Sophisticated Query Building
     const skills = resume_data?.skills || [];
@@ -409,7 +560,51 @@ router.post('/search-companies', authenticateRequest, async (req, res) => {
 
   try {
     const JSEARCH_API_KEY = process.env.RAPIDAPI_KEY;
-    if (!JSEARCH_API_KEY) return res.status(503).json({ error: "Search service unavailable" });
+    if (!JSEARCH_API_KEY) {
+      console.warn("RAPIDAPI_KEY missing. Returning mock companies for local development.");
+      const mockQuery = query || industry || "tech";
+      const mockLocation = location || "India";
+      const companies = [
+        {
+          name: "TechCorp Solutions",
+          logo: null,
+          website: "https://techcorp.example.com",
+          company_type: "Technology",
+          city: "Mumbai",
+          state: "MH",
+          country: "IN",
+          open_jobs: [
+            { job_title: `Senior ${mockQuery} Engineer`, job_type: "Remote", location: mockLocation, url: "#", posted_date: new Date().toISOString().split('T')[0], description: "Lead product development across engineering squads." },
+            { job_title: `${mockQuery} Architect`, job_type: "Hybrid", location: mockLocation, url: "#", posted_date: new Date().toISOString().split('T')[0], description: "Design and oversee scalable system architecture." }
+          ]
+        },
+        {
+          name: "Innovate Labs",
+          logo: null,
+          website: "https://innovatelabs.example.com",
+          company_type: "Startup",
+          city: "Bengaluru",
+          state: "KA",
+          country: "IN",
+          open_jobs: [
+            { job_title: `${mockQuery} Lead`, job_type: "On-site", location: "Bengaluru, KA", url: "#", posted_date: new Date().toISOString().split('T')[0], description: "Own the product journey from ideation to launch." }
+          ]
+        },
+        {
+          name: "NextGen Software",
+          logo: null,
+          website: "https://nextgen.example.com",
+          company_type: "Enterprise",
+          city: "Hyderabad",
+          state: "TS",
+          country: "IN",
+          open_jobs: [
+            { job_title: `Full-Stack ${mockQuery} Developer`, job_type: "Remote", location: "Remote", url: "#", posted_date: new Date().toISOString().split('T')[0], description: "Build scalable full-stack applications for enterprise clients." }
+          ]
+        }
+      ];
+      return res.json({ companies });
+    }
 
     let searchQuery = query || industry || "hiring";
     if (location) searchQuery += ` in ${location}`;

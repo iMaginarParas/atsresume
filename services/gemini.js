@@ -10,6 +10,9 @@ const MODEL_NAMES = [
  */
 async function generateStructuredContent(prompt, systemPrompt = "", schemaDescription = "") {
   const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not set. Please add it to your backend/.env file to enable AI features.");
+  }
   let lastError;
 
   for (const modelName of MODEL_NAMES) {
@@ -49,6 +52,9 @@ async function generateStructuredContent(prompt, systemPrompt = "", schemaDescri
  */
 async function generateContent(message, systemPrompt = "") {
   const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not set. Please add it to your backend/.env file to enable AI features.");
+  }
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAMES[0]}:generateContent?key=${apiKey}`;
 
   const body = {
